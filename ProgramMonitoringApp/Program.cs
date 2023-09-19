@@ -10,8 +10,8 @@ namespace ProgramMonitoringApp
         static int idleWaitingMillis = 6000;
         static int loopIntervalSec = 1;
         static string targetProcessName = "OpcDataCollectionApp"; // Thay tên chương trình cần theo dõi vào đây
-        //static string targetProcessPath = @"C:\Users\OPC-MES\Downloads\win-x86\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
-        static string targetProcessPath = @"D:\Offline-Cloud\VIOT\Projects\Takako\OpcDataCollectionApp\OpcDataCollectionApp\bin\x86\Debug\net6.0-windows\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
+        static string targetProcessPath = @"C:\Users\OPC-MES\Downloads\win-x86\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
+        //static string targetProcessPath = @"D:\Offline-Cloud\VIOT\Projects\Takako\OpcDataCollectionApp\OpcDataCollectionApp\bin\x86\Debug\net6.0-windows\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
         #endregion
 
         static void Main()
