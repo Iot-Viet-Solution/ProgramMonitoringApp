@@ -8,8 +8,8 @@ namespace ProgramMonitoringApp
 		static int count = 1;
 		static void Main()
 		{
-			string targetProcessName = "TestTreoChuongTrinh"; // Thay tên chương trình cần theo dõi vào đây
-			string targetProcessPath = "C:\\Users\\tricu\\source\\repos\\TestTreoChuongTrinh\\TestTreoChuongTrinh\\bin\\Debug\\net6.0-windows\\TestTreoChuongTrinh.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
+			string targetProcessName = "OpcDataCollectionApp"; // Thay tên chương trình cần theo dõi vào đây
+			string targetProcessPath = "C:\\Users\\tricu\\source\\repos\\OpcDataCollectionApp\\OpcDataCollectionApp\\bin\\x86\\Debug\\net6.0-windows\\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
 
 			while (true)
 			{
@@ -27,6 +27,8 @@ namespace ProgramMonitoringApp
 
 						if (!isRunning)
 						{
+							count++;
+							Console.SetCursorPosition(0, count);
 							Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {targetProcessName} khong chay, khoi dong lai...");
 
 							// Kill chương trình đích nếu nó đang chạy
@@ -62,7 +64,7 @@ namespace ProgramMonitoringApp
 		static bool IsProcessRunning(string processName)
 		{
 			Process[] processes = Process.GetProcessesByName(processName);
-			return processes.Length > 0 && !processes[0].HasExited;
+			return processes.Length > 0 && !processes[0].HasExited && processes[0].Responding;
 		}
 
 		static bool IsProcessNotResponding(string processName)
