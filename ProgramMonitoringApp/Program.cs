@@ -30,9 +30,11 @@ namespace ProgramMonitoringApp
                     {
                         bool isRunning = IsProcessRunning(targetProcessName);
 
-                        if (!isRunning)
-                        {
-                            Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {targetProcessName} khong chay, khoi dong lai...");
+						if (!isRunning)
+						{
+							count++;
+							Console.SetCursorPosition(0, count);
+							Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {targetProcessName} khong chay, khoi dong lai...");
 
                             // Kill chương trình đích nếu nó đang chạy
                             KillProcess(targetProcessName);
