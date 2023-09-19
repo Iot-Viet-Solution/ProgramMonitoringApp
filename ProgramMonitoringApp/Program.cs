@@ -104,7 +104,7 @@ namespace ProgramMonitoringApp
                 {
                     count++;
                     Console.SetCursorPosition(0, count);
-                    Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Không thể dừng chương trình: {ex.Message}");
+                    Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Khong the dung chuong trinh: {ex.Message}");
                 }
             }
         }
@@ -119,7 +119,7 @@ namespace ProgramMonitoringApp
             {
                 count++;
                 Console.SetCursorPosition(0, count);
-                Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Không thể khởi động chương trình: {ex.Message}");
+                Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Khong the khoi dong chuong trinh: {ex.Message}");
             }
         }
     }
