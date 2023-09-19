@@ -6,12 +6,17 @@ namespace ProgramMonitoringApp
 	class Program
 	{
 		static int count = 1;
-		static void Main()
+        static int idleWaitingMillis = 6000;
+        static int loopIntervalSec = 1;
+
+
+        static void Main()
 		{
-			string targetProcessName = "TestTreoChuongTrinh"; // Thay tên chương trình cần theo dõi vào đây
+			string targetProcessName = "OpcDataCollector"; // Thay tên chương trình cần theo dõi vào đây
 			string targetProcessPath = "C:\\Users\\tricu\\source\\repos\\TestTreoChuongTrinh\\TestTreoChuongTrinh\\bin\\Debug\\net6.0-windows\\TestTreoChuongTrinh.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
 
-			while (true)
+
+            while (true)
 			{
 				try
 				{
@@ -55,7 +60,7 @@ namespace ProgramMonitoringApp
 					Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - loi: {ex.Message}");
 				}
 
-				Thread.Sleep(TimeSpan.FromSeconds(1)); // Chờ 5 giây (có thể điều chỉnh)
+				Thread.Sleep(TimeSpan.FromSeconds(loopIntervalSec)); // Chờ 5 giây (có thể điều chỉnh)
 			}
 		}
 
@@ -73,7 +78,7 @@ namespace ProgramMonitoringApp
 				try
 				{
 					// Chờ tiến trình có trạng thái không phản hồi trong một khoảng thời gian nhất định
-					if (processes[0].WaitForInputIdle(6000))
+					if (processes[0].WaitForInputIdle(idleWaitingMillis))
 					{
 						return false; // Tiến trình phản hồi
 					}
