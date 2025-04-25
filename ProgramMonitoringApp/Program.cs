@@ -1,17 +1,37 @@
 ﻿using System;
 using System.Diagnostics;
 
+
 namespace ProgramMonitoringApp
 {
     class Program
     {
         #region User variables
+
         static int count = 1;
         static int idleWaitingMillis = 6000;
         static int loopIntervalSec = 1;
-        static string targetProcessName = "OpcDataCollectionApp"; // Thay tên chương trình cần theo dõi vào đây
-        static string targetProcessPath = @"C:\Users\OPC-MES\Downloads\win-x86\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
+
+        #region OPC Data collector program
+
+        static string targetProcessName = "OpcDataCollectionApp"; // Thay tên chương trình cần theo dõi vào đây 
+        static string targetProcessPath = @"E:\2025\opc-datacollector\win-x86\OpcDataCollectionApp.exe"; // [Production] Takako Update new 2025.2
+        //static string targetProcessPath = @"D:\USERS\Downloads\opc-datacollector\win-x86\OpcDataCollectionApp.exe"; // [Production] Takako Update new 2025
+        // static string targetProcessPath = @"C:\Users\SR2023001\Downloads\win-x86\OpcDataCollectionApp.exe"; // [Production] Takako Update new 2024 
         //static string targetProcessPath = @"D:\Offline-Cloud\VIOT\Projects\Takako\OpcDataCollectionApp\OpcDataCollectionApp\bin\x86\Debug\net6.0-windows\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
+        //static string targetProcessPath = @"E:\MES\OPC\win-x86\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
+
+        #endregion
+
+        #region Sim COM program
+
+        // static string targetProcessName = "COM Ports Communication"; // Thay tên chương trình cần theo dõi vào đây
+        //
+        // static string targetProcessPath =
+        //     @"C:\Users\Dung Duyen\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\COM Ports Communication.appref-ms"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
+
+        #endregion
+
         #endregion
 
         static void Main()
@@ -30,11 +50,12 @@ namespace ProgramMonitoringApp
                     {
                         bool isRunning = IsProcessRunning(targetProcessName);
 
-						if (!isRunning)
-						{
-							count++;
-							Console.SetCursorPosition(0, count);
-							Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {targetProcessName} khong chay, khoi dong lai...");
+                        if (!isRunning)
+                        {
+                            count++;
+                            Console.SetCursorPosition(0, count);
+                            Console.WriteLine(
+                                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {targetProcessName} khong chay, khoi dong lai...");
 
                             // Kill chương trình đích nếu nó đang chạy
                             KillProcess(targetProcessName);
@@ -46,14 +67,14 @@ namespace ProgramMonitoringApp
                     {
                         count++;
                         Console.SetCursorPosition(0, count);
-                        Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {targetProcessName} khong phan hoi, khoi dong lai...");
+                        Console.WriteLine(
+                            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {targetProcessName} khong phan hoi, khoi dong lai...");
 
                         // Kill chương trình đích nếu nó không phản hồi
                         KillProcess(targetProcessName);
 
                         StartProcess(targetProcessPath);
                     }
-
                 }
                 catch (Exception ex)
                 {
@@ -90,6 +111,7 @@ namespace ProgramMonitoringApp
                     // Lỗi xảy ra khi kiểm tra trạng thái không phản hồi
                 }
             }
+
             return true; // Tiến trình không phản hồi hoặc không chạy
         }
 
@@ -107,7 +129,8 @@ namespace ProgramMonitoringApp
                 {
                     count++;
                     Console.SetCursorPosition(0, count);
-                    Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Khong the dung chuong trinh: {ex.Message}");
+                    Console.WriteLine(
+                        $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Khong the dung chuong trinh: {ex.Message}");
                 }
             }
         }
@@ -122,10 +145,9 @@ namespace ProgramMonitoringApp
             {
                 count++;
                 Console.SetCursorPosition(0, count);
-                Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Khong the khoi dong chuong trinh: {ex.Message}");
+                Console.WriteLine(
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Khong the khoi dong chuong trinh: {ex.Message}");
             }
         }
     }
-
 }
-
