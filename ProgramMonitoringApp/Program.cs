@@ -1,89 +1,75 @@
 ﻿using System;
 using System.Diagnostics;
-
+using System.IO;
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using System.Collections.Generic;
 
 namespace ProgramMonitoringApp
 {
     class Program
     {
-        #region User variables
-
         static int count = 1;
-        static int idleWaitingMillis = 6000;
-        static int loopIntervalSec = 1;
-
-        #region OPC Data collector program
-
-        static string targetProcessName = "OpcDataCollectionApp"; // Thay tên chương trình cần theo dõi vào đây 
-        static string targetProcessPath = @"E:\2025\opc-datacollector\win-x86\OpcDataCollectionApp.exe"; // [Production] Takako Update new 2025.2
-        //static string targetProcessPath = @"D:\USERS\Downloads\opc-datacollector\win-x86\OpcDataCollectionApp.exe"; // [Production] Takako Update new 2025
-        // static string targetProcessPath = @"C:\Users\SR2023001\Downloads\win-x86\OpcDataCollectionApp.exe"; // [Production] Takako Update new 2024 
-        //static string targetProcessPath = @"D:\Offline-Cloud\VIOT\Projects\Takako\OpcDataCollectionApp\OpcDataCollectionApp\bin\x86\Debug\net6.0-windows\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
-        //static string targetProcessPath = @"E:\MES\OPC\win-x86\OpcDataCollectionApp.exe"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
-
-        #endregion
-
-        #region Sim COM program
-
-        // static string targetProcessName = "COM Ports Communication"; // Thay tên chương trình cần theo dõi vào đây
-        //
-        // static string targetProcessPath =
-        //     @"C:\Users\Dung Duyen\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\COM Ports Communication.appref-ms"; // Thay đường dẫn đến chương trình cần theo dõi vào đây
-
-        #endregion
-
-        #endregion
+        static int idleWaitingMillis;
+        static int loopIntervalSec;
+        static List<TargetProcess> targetProcesses;
 
         static void Main()
         {
+            // Đọc cấu hình từ appsettings.json
+            var config = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+                .Build();
+
+            idleWaitingMillis = int.Parse(config["Settings:IdleWaitingMillis"]);
+            loopIntervalSec = int.Parse(config["Settings:LoopIntervalSec"]);
+            targetProcesses = config.GetSection("TargetProcesses").Get<List<TargetProcess>>();
+
             while (true)
             {
-                try
+                foreach (var process in targetProcesses)
                 {
-                    // Di chuyển con trỏ ghi đến vị trí (0, 0) trên màn hình
-                    Console.SetCursorPosition(0, 0);
-                    Console.Write("Thoi Gian Hien Tai: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-
-                    bool isNotResponding = IsProcessNotResponding(targetProcessName);
-
-                    if (!isNotResponding)
+                    try
                     {
-                        bool isRunning = IsProcessRunning(targetProcessName);
+                        Console.SetCursorPosition(0, 0);
+                        Console.Write("Thoi Gian Hien Tai: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
 
-                        if (!isRunning)
+                        bool isNotResponding = IsProcessNotResponding(process.Name);
+
+                        if (!isNotResponding)
                         {
-                            count++;
-                            Console.SetCursorPosition(0, count);
-                            Console.WriteLine(
-                                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {targetProcessName} khong chay, khoi dong lai...");
+                            bool isRunning = IsProcessRunning(process.Name);
 
-                            // Kill chương trình đích nếu nó đang chạy
-                            KillProcess(targetProcessName);
+                            if (!isRunning)
+                            {
+                                // count++;
+                                // Console.SetCursorPosition(0, count);
+                                //Console.WriteLine( $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {process.Name} khong chay, khoi dong lai...");
 
-                            StartProcess(targetProcessPath);
+                                KillProcess(process.Name);
+                                StartProcess(process.Path);
+                            }
+                        }
+                        else
+                        {
+                            // count++;
+                            // Console.SetCursorPosition(0, count);
+                            // Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {process.Name} khong phan hoi, khoi dong lai...");
+
+                            KillProcess(process.Name);
+                            StartProcess(process.Path);
                         }
                     }
-                    else
+                    catch (Exception ex)
                     {
                         count++;
                         Console.SetCursorPosition(0, count);
-                        Console.WriteLine(
-                            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {targetProcessName} khong phan hoi, khoi dong lai...");
-
-                        // Kill chương trình đích nếu nó không phản hồi
-                        KillProcess(targetProcessName);
-
-                        StartProcess(targetProcessPath);
+                        Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - loi: {ex.Message}");
                     }
                 }
-                catch (Exception ex)
-                {
-                    count++;
-                    Console.SetCursorPosition(0, count);
-                    Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - loi: {ex.Message}");
-                }
 
-                Thread.Sleep(TimeSpan.FromSeconds(loopIntervalSec)); // Chờ 5 giây (có thể điều chỉnh)
+                Thread.Sleep(TimeSpan.FromSeconds(loopIntervalSec));
             }
         }
 
@@ -100,19 +86,17 @@ namespace ProgramMonitoringApp
             {
                 try
                 {
-                    // Chờ tiến trình có trạng thái không phản hồi trong một khoảng thời gian nhất định
                     if (processes[0].WaitForInputIdle(idleWaitingMillis))
                     {
-                        return false; // Tiến trình phản hồi
+                        return false;
                     }
                 }
                 catch (Exception)
                 {
-                    // Lỗi xảy ra khi kiểm tra trạng thái không phản hồi
                 }
             }
 
-            return true; // Tiến trình không phản hồi hoặc không chạy
+            return true;
         }
 
         static void KillProcess(string processName)
@@ -123,7 +107,7 @@ namespace ProgramMonitoringApp
                 try
                 {
                     process.Kill();
-                    process.WaitForExit(); // Chờ quá trình kết thúc trước khi tiếp tục
+                    process.WaitForExit();
                 }
                 catch (Exception ex)
                 {
@@ -146,8 +130,14 @@ namespace ProgramMonitoringApp
                 count++;
                 Console.SetCursorPosition(0, count);
                 Console.WriteLine(
-                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Khong the khoi dong chuong trinh: {ex.Message}");
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Khong the khoi dong chuong trinh tai {processPath}: {ex.Message}");
             }
         }
+    }
+
+    class TargetProcess
+    {
+        public string Name { get; set; }
+        public string Path { get; set; }
     }
 }
