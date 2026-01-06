@@ -9,16 +9,28 @@ using System.Linq;
 using System.Threading.Tasks;
 using MongoDB.Driver;
 using MongoDB.Bson;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace ProgramMonitoringApp
 {
     class Program
     {
+        // Windows API declarations
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern IntPtr FindWindow(string? lpClassName, string lpWindowName);
+        
+        [DllImport("user32.dll")]
+        static extern bool IsWindow(IntPtr hWnd);
+        
+        [DllImport("user32.dll")]
+        static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
         static int logLine = 1;
         static int? idleWaitingMillis;
         static int? loopIntervalSec;
         static List<TargetProcess>? targetProcesses;
-        static Dictionary<string, int> trackedPIDs = new Dictionary<string, int>(); // Theo doi PID cua process
+        static Dictionary<string, Process?> trackedProcesses = new Dictionary<string, Process?>(); // Theo doi Process object
         static Dictionary<string, string> processStatus = new Dictionary<string, string>(); // Theo doi trang thai process
 
         static async Task Main()
@@ -60,46 +72,70 @@ namespace ProgramMonitoringApp
                             continue;
                         }
 
-                        // 1. Kiem tra trang thai Process trong OS
-                        var runningInstances = GetRunningProcesses(process.Name);
-                        int instanceCount = runningInstances.Count;
+                        // 1. Kiem tra trang thai Process bang Window Title
+                        bool anyRunning = false;
                         bool anyNotResponding = false;
-                        bool anyRunning = instanceCount > 0;
                         int currentPID = 0;
-                        List<int> allPIDs = new List<int>();
+                        Process? currentProcess = null;
                         
-                        try
+                        // Kiem tra bang Window Title (neu co cau hinh)
+                        if (!string.IsNullOrEmpty(process.WindowTitle))
                         {
-                            foreach (var proc in runningInstances)
+                            IntPtr hWnd = FindWindow(null, process.WindowTitle);
+                            if (hWnd != IntPtr.Zero && IsWindow(hWnd))
                             {
-                                try { allPIDs.Add(proc.Id); } catch { }
-                            }
-                            if (allPIDs.Count > 0) currentPID = allPIDs[0];
-                        }
-                        catch (Exception ex) { Log($"Loi khi lay PID: {ex.Message}"); }
-                        
-                        if (instanceCount > 1)
-                        {
-                            if (!processStatus.ContainsKey(process.Name) || processStatus[process.Name] != "multiple_instances")
-                            {
-                                processStatus[process.Name] = "multiple_instances";
-                            }
-                        }
-                        
-                        try
-                        {
-                            foreach (var proc in runningInstances)
-                            {
-                                if (!IsProcessResponding(proc))
+                                uint pid;
+                                GetWindowThreadProcessId(hWnd, out pid);
+                                try
                                 {
-                                    anyNotResponding = true;
-                                    break;
+                                    currentProcess = Process.GetProcessById((int)pid);
+                                    anyRunning = true;
+                                    currentPID = (int)pid;
+                                    anyNotResponding = !IsProcessResponding(currentProcess);
+                                    
+                                    // Update tracked process
+                                    if (trackedProcesses.ContainsKey(process.Name))
+                                    {
+                                        if (trackedProcesses[process.Name] != currentProcess)
+                                        {
+                                            trackedProcesses[process.Name]?.Dispose();
+                                        }
+                                    }
+                                    trackedProcesses[process.Name] = currentProcess;
+                                }
+                                catch
+                                {
+                                    anyRunning = false;
                                 }
                             }
                         }
-                        finally
+                        else
                         {
-                            foreach (var proc in runningInstances) proc?.Dispose();
+                            // Fallback: Kiem tra process da track truoc
+                            if (trackedProcesses.ContainsKey(process.Name) && trackedProcesses[process.Name] != null)
+                            {
+                                var tracked = trackedProcesses[process.Name];
+                                try
+                                {
+                                    if (!tracked!.HasExited)
+                                    {
+                                        anyRunning = true;
+                                        currentPID = tracked.Id;
+                                        currentProcess = tracked;
+                                        anyNotResponding = !IsProcessResponding(tracked);
+                                    }
+                                    else
+                                    {
+                                        tracked.Dispose();
+                                        trackedProcesses[process.Name] = null;
+                                    }
+                                }
+                                catch
+                                {
+                                    tracked?.Dispose();
+                                    trackedProcesses[process.Name] = null;
+                                }
+                            }
                         }
 
                         // 2. Kiem tra tin hieu tu MongoDB (neu co cau hinh)
@@ -120,12 +156,33 @@ namespace ProgramMonitoringApp
                                 processStatus[process.Name] = "restarting_" + reason;
                             }
 
-                            if (anyRunning)
+                            // Kill process cu (neu co)
+                            if (currentProcess != null && !currentProcess.HasExited)
                             {
-                                KillProcess(process.Name);
+                                try
+                                {
+                                    int pid = currentProcess.Id;
+                                    currentProcess.Kill();
+                                    currentProcess.WaitForExit(3000);
+                                    Log($"Da kill process PID: {pid}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log($"Loi khi kill process: {ex.Message}");
+                                }
+                                finally
+                                {
+                                    currentProcess?.Dispose();
+                                }
                             }
                             
-                            trackedPIDs.Remove(process.Name);
+                            // Clear tracked process
+                            if (trackedProcesses.ContainsKey(process.Name))
+                            {
+                                trackedProcesses[process.Name] = null;
+                            }
+                            
+                            // Start process moi
                             if (!string.IsNullOrWhiteSpace(process.Path))
                             {
                                 StartProcess(process.Path, process.Name);
@@ -137,29 +194,15 @@ namespace ProgramMonitoringApp
                         else
                         {
                             // Process dang chay binh thuong
-                            if (!trackedPIDs.ContainsKey(process.Name))
+                            if (processStatus.ContainsKey(process.Name) && processStatus[process.Name] == "restarted")
                             {
-                                trackedPIDs[process.Name] = currentPID;
-                                Log($"{process.Name} dang chay voi PID: {currentPID} (Signal OK)");
+                                Log($"{process.Name} da khoi dong lai thanh cong va dang chay binh thuong (PID: {currentPID}).");
                                 processStatus[process.Name] = "running";
                             }
-                            else if (trackedPIDs[process.Name] != currentPID)
+                            else if (!processStatus.ContainsKey(process.Name) || processStatus[process.Name] != "running")
                             {
-                                Log($"{process.Name} da KHOI DONG LAI: PID cu: {trackedPIDs[process.Name]} -> PID moi: {currentPID}");
-                                trackedPIDs[process.Name] = currentPID;
+                                Log($"{process.Name} dang chay voi PID: {currentPID}");
                                 processStatus[process.Name] = "running";
-                            }
-                            else
-                            {
-                                if (processStatus.ContainsKey(process.Name) && processStatus[process.Name] == "restarted")
-                                {
-                                    Log($"{process.Name} da khoi dong lai thanh cong va dang chay binh thuong (PID: {currentPID}).");
-                                    processStatus[process.Name] = "running";
-                                }
-                                else
-                                {
-                                    processStatus[process.Name] = "running";
-                                }
                             }
                         }
                     }
@@ -280,7 +323,7 @@ namespace ProgramMonitoringApp
                 if (proc != null)
                 {
                     Log($"Da khoi dong process: {processPath} (PID: {proc.Id})");
-                    trackedPIDs[processName] = proc.Id;
+                    trackedProcesses[processName] = proc;
                     if (idleWaitingMillis.HasValue && idleWaitingMillis.Value > 0)
                     {
                         Log($"Dang doi {idleWaitingMillis.Value}ms...");
@@ -303,9 +346,11 @@ namespace ProgramMonitoringApp
     {
         public string? Name { get; set; }
         public string? Path { get; set; }
+        public string? WindowTitle { get; set; }  // Ten cua so de kiem tra
         
         // Mongo Monitor
         public bool? EnableMongoMonitor { get; set; }
+        public string? SignalType { get; set; }  // Loai tin hieu (Nhiet/San xuat)
         public string? MongoUri { get; set; }
         public string? DbName { get; set; }
         public string? CollectionName { get; set; }
