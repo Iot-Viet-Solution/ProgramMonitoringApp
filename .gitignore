@@ -533,5 +533,6 @@ fabric.properties
 
 # User-specific configuration files
 **/appsettings.json
+**/config.json
 
 */monitor_mongo_lastsignal

@@ -11,6 +11,7 @@ using MongoDB.Driver;
 using MongoDB.Bson;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Net.Http;
 
 namespace ProgramMonitoringApp
 {
@@ -32,28 +33,44 @@ namespace ProgramMonitoringApp
         static List<TargetProcess>? targetProcesses;
         static Dictionary<string, Process?> trackedProcesses = new Dictionary<string, Process?>(); // Theo doi Process object
         static Dictionary<string, string> processStatus = new Dictionary<string, string>(); // Theo doi trang thai process
+        static Dictionary<string, DateTime> lastRestartTimes = new Dictionary<string, DateTime>(); // Theo doi thoi gian restart gan nhat
+        static Dictionary<string, MongoClient> mongoClients = new Dictionary<string, MongoClient>(); // Cache MongoClient
+        static AppConfig? appConfig;
+        static readonly HttpClient httpClient = new HttpClient();
 
         static async Task Main()
         {
             try
             {
-                // Đọc cấu hình từ appsettings.json
-                var config = new ConfigurationBuilder()
+                // Đọc cấu hình từ appsettings.json và config.json
+                var builder = new ConfigurationBuilder()
                     .SetBasePath(Directory.GetCurrentDirectory())
                     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-                    .Build();
+                    .AddJsonFile("config.json", optional: false, reloadOnChange: true);
 
-                var idleWaitingMillisStr = config["Settings:IdleWaitingMillis"];
-                var loopIntervalSecStr = config["Settings:LoopIntervalSec"];
-                idleWaitingMillis = int.TryParse(idleWaitingMillisStr, out var idleVal) ? idleVal : 1000;
-                loopIntervalSec = int.TryParse(loopIntervalSecStr, out var loopVal) ? loopVal : 5;
-                targetProcesses = config.GetSection("TargetProcesses").Get<List<TargetProcess>>() ?? new List<TargetProcess>();
+                var config = builder.Build();
+
+                appConfig = config.Get<AppConfig>();
                 
-                Log($"Da load {targetProcesses.Count} process tu config.");
+                idleWaitingMillis = appConfig?.Settings?.IdleWaitingMillis ?? 1000;
+                loopIntervalSec = appConfig?.Settings?.LoopIntervalSec ?? 5;
+                targetProcesses = appConfig?.TargetProcesses ?? new List<TargetProcess>();
+                
+                // Khoi tao Grace Period cho tat ca process ngay khi monitor bat dau
+                foreach (var p in targetProcesses)
+                {
+                    if (!string.IsNullOrEmpty(p.Name))
+                    {
+                        lastRestartTimes[p.Name] = DateTime.Now;
+                    }
+                }
+
+                Log($"Da load {targetProcesses.Count} process tu config. Grace period 2 phut da duoc kich hoat.");
+                await SendNotification($":rocket: **ProgramMonitoringApp** đã khởi động tại **{appConfig?.Settings?.SiteName ?? "Unknown site"}**.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"LOI: Khong the doc appsettings.json: {ex.Message}");
+                Console.WriteLine($"LOI: Khong the doc cau hinh: {ex.Message}");
                 Console.WriteLine("Nhan phim bat ky de thoat...");
                 Console.ReadKey();
                 return;
@@ -72,7 +89,18 @@ namespace ProgramMonitoringApp
                             continue;
                         }
 
-                        // 1. Kiem tra trang thai Process bang Window Title
+                        // Kiem tra Grace Period sau khi restart
+                        if (lastRestartTimes.ContainsKey(process.Name))
+                        {
+                            var timeSinceRestart = DateTime.Now - lastRestartTimes[process.Name];
+                            if (timeSinceRestart < TimeSpan.FromMinutes(2))
+                            {
+                                Log($"{process.Name} đang trong thời gian chờ khởi động ({timeSinceRestart.TotalSeconds:F0}s), bỏ qua kiểm tra.");
+                                continue;
+                            }
+                        }
+
+                        // 1. Kiem tra trang thai Process
                         bool anyRunning = false;
                         bool anyNotResponding = false;
                         int currentPID = 0;
@@ -92,50 +120,37 @@ namespace ProgramMonitoringApp
                                     anyRunning = true;
                                     currentPID = (int)pid;
                                     anyNotResponding = !IsProcessResponding(currentProcess);
-                                    
-                                    // Update tracked process
-                                    if (trackedProcesses.ContainsKey(process.Name))
-                                    {
-                                        if (trackedProcesses[process.Name] != currentProcess)
-                                        {
-                                            trackedProcesses[process.Name]?.Dispose();
-                                        }
-                                    }
-                                    trackedProcesses[process.Name] = currentProcess;
                                 }
-                                catch
+                                catch { anyRunning = false; }
+                            }
+                        }
+
+                        // Fallback: Kiem tra process da track truoc hoac GetProcessesByName neu WindowTitle fail
+                        if (!anyRunning && trackedProcesses.ContainsKey(process.Name) && trackedProcesses[process.Name] != null)
+                        {
+                            var tracked = trackedProcesses[process.Name];
+                            try
+                            {
+                                if (!tracked!.HasExited)
                                 {
-                                    anyRunning = false;
+                                    anyRunning = true;
+                                    currentPID = tracked.Id;
+                                    currentProcess = tracked;
+                                    anyNotResponding = !IsProcessResponding(tracked);
                                 }
                             }
+                            catch { }
+                        }
+
+                        // Update tracked process and its status
+                        if (anyRunning)
+                        {
+                            trackedProcesses[process.Name] = currentProcess;
                         }
                         else
                         {
-                            // Fallback: Kiem tra process da track truoc
-                            if (trackedProcesses.ContainsKey(process.Name) && trackedProcesses[process.Name] != null)
-                            {
-                                var tracked = trackedProcesses[process.Name];
-                                try
-                                {
-                                    if (!tracked!.HasExited)
-                                    {
-                                        anyRunning = true;
-                                        currentPID = tracked.Id;
-                                        currentProcess = tracked;
-                                        anyNotResponding = !IsProcessResponding(tracked);
-                                    }
-                                    else
-                                    {
-                                        tracked.Dispose();
-                                        trackedProcesses[process.Name] = null;
-                                    }
-                                }
-                                catch
-                                {
-                                    tracked?.Dispose();
-                                    trackedProcesses[process.Name] = null;
-                                }
-                            }
+                            if (trackedProcesses.ContainsKey(process.Name)) trackedProcesses[process.Name]?.Dispose();
+                            trackedProcesses[process.Name] = null;
                         }
 
                         // 2. Kiem tra tin hieu tu MongoDB (neu co cau hinh)
@@ -154,6 +169,10 @@ namespace ProgramMonitoringApp
                             {
                                 Log($"{process.Name} {reason}, dang kill va khoi dong lai...");
                                 processStatus[process.Name] = "restarting_" + reason;
+
+                                // Gui notification khi restart
+                                await SendNotification($":rotating_light: **{process.Name}** ({process.SignalType}) - {reason}\n" +
+                                                      $"Hành động: Đã kill và đang khởi động lại.");
                             }
 
                             // Kill process cu (neu co)
@@ -175,29 +194,33 @@ namespace ProgramMonitoringApp
                                     currentProcess?.Dispose();
                                 }
                             }
-                            
+
                             // Clear tracked process
                             if (trackedProcesses.ContainsKey(process.Name))
                             {
                                 trackedProcesses[process.Name] = null;
                             }
-                            
+
                             // Start process moi
                             if (!string.IsNullOrWhiteSpace(process.Path))
                             {
                                 StartProcess(process.Path, process.Name);
                                 processStatus[process.Name] = "restarted";
+                                lastRestartTimes[process.Name] = DateTime.Now;
                             }
                             else
+                            {
                                 Log("Process.Path bi null hoac rong, khong the khoi dong.");
+                            }
                         }
                         else
                         {
                             // Process dang chay binh thuong
-                            if (processStatus.ContainsKey(process.Name) && processStatus[process.Name] == "restarted")
+                            if (processStatus.ContainsKey(process.Name) && (processStatus[process.Name] == "restarted" || processStatus[process.Name].StartsWith("restarting_")))
                             {
-                                Log($"{process.Name} da khoi dong lai thanh cong va dang chay binh thuong (PID: {currentPID}).");
+                                Log($"{process.Name} đã hoạt động bình thường trở lại (PID: {currentPID}).");
                                 processStatus[process.Name] = "running";
+                                await SendNotification($":white_check_mark: **{process.Name}** ({process.SignalType}) đã hoạt động bình thường trở lại (PID: {currentPID}).");
                             }
                             else if (!processStatus.ContainsKey(process.Name) || processStatus[process.Name] != "running")
                             {
@@ -222,7 +245,11 @@ namespace ProgramMonitoringApp
 
             try
             {
-                var client = new MongoClient(process.MongoUri);
+                if (!mongoClients.ContainsKey(process.MongoUri))
+                {
+                    mongoClients[process.MongoUri] = new MongoClient(process.MongoUri);
+                }
+                var client = mongoClients[process.MongoUri];
                 var database = client.GetDatabase(process.DbName);
                 var collection = database.GetCollection<BsonDocument>(process.CollectionName);
 
@@ -230,36 +257,79 @@ namespace ProgramMonitoringApp
                     ? MongoDB.Bson.Serialization.BsonSerializer.Deserialize<BsonDocument>(process.MongoFilterJson)
                     : new BsonDocument();
 
-                var sort = Builders<BsonDocument>.Sort.Descending(process.LastSignalField);
+                var sort = Builders<BsonDocument>.Sort.Descending(process.LastSignalField ?? "LastSignal");
                 var latestDoc = await collection.Find(filter).Sort(sort).Limit(1).FirstOrDefaultAsync();
 
                 if (latestDoc == null)
                 {
-                    Log($"[MONGO][{process.Name}] Khong tim thay document.");
+                    Log($"[MONGO][{process.Name}] Không tìm thấy dữ liệu với bộ lọc: {process.MongoFilterJson}");
                     return false;
                 }
 
-                if (latestDoc.TryGetValue(process.LastSignalField, out var lastValue))
+                if (latestDoc.TryGetValue(process.LastSignalField ?? "LastSignal", out var lastValue))
                 {
                     DateTime lastDt;
-                    if (lastValue.IsBsonDateTime) lastDt = lastValue.ToUniversalTime();
-                    else if (lastValue.IsString) lastDt = DateTime.Parse(lastValue.AsString).ToUniversalTime();
-                    else return false;
-
-                    var age = DateTime.UtcNow - lastDt;
-                    if (age.TotalMinutes > (process.ThresholdMinutes ?? 5))
+                    if (lastValue.IsBsonDateTime) 
                     {
-                        Log($"[MONGO][{process.Name}] Mat tin hieu! Lan cuoi: {lastDt.ToLocalTime()} ({age.TotalMinutes:F1} phut truoc)");
+                        lastDt = lastValue.ToUniversalTime();
+                    }
+                    else if (lastValue.IsString) 
+                    {
+                        if (DateTime.TryParse(lastValue.AsString, out var parsed))
+                            lastDt = parsed.ToUniversalTime();
+                        else
+                        {
+                            Log($"[MONGO][{process.Name}] Không thể parse chuỗi thời gian: {lastValue.AsString}");
+                            return false;
+                        }
+                    }
+                    else if (lastValue.IsInt64 || lastValue.IsInt32 || lastValue.IsDouble)
+                    {
+                        // Truong hop la timestamp (seconds hoac milliseconds)
+                        long timestamp = lastValue.IsDouble ? (long)lastValue.AsDouble : (lastValue.IsInt64 ? lastValue.AsInt64 : lastValue.AsInt32);
+                        
+                        // Neu timestamp > 10^12 thi la milliseconds (VD: 1768285144000)
+                        // Neu timestamp < 10^11 thi la seconds (VD: 1768285144)
+                        if (timestamp > 99999999999) 
+                        {
+                            lastDt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp).UtcDateTime;
+                        }
+                        else 
+                        {
+                            lastDt = DateTimeOffset.FromUnixTimeSeconds(timestamp).UtcDateTime;
+                        }
+                    }
+                    else 
+                    {
+                        Log($"[MONGO][{process.Name}] Kiểu dữ liệu không hợp lệ cho {process.LastSignalField}: {lastValue.BsonType}");
                         return false;
                     }
+
+                    var nowUtc = DateTime.UtcNow;
+                    var age = nowUtc - lastDt;
+                    
+                    if (age.TotalMinutes > (process.ThresholdMinutes ?? 5))
+                    {
+                        Log($"[MONGO][{process.Name}] MẤT TÍN HIỆU!");
+                        Log($"  + Timestamp gốc: {lastValue.ToString()}");
+                        Log($"  + Thời gian hiện tại (Local): {DateTime.Now:HH:mm:ss}");
+                        Log($"  + Tín hiệu cuối (Local): {lastDt.ToLocalTime():HH:mm:ss}");
+                        Log($"  + Độ trễ: {age.TotalMinutes:F1} phút (Ngưỡng: {process.ThresholdMinutes} phút)");
+                        return false;
+                    }
+                    
+                    // Log thanh cong (optional, co the tat neu qua nhieu log)
+                    // Log($"[MONGO][{process.Name}] Tín hiệu OK. Độ trễ: {age.TotalMinutes:F1} phút.");
                     return true;
                 }
+                
+                Log($"[MONGO][{process.Name}] Document không chứa trường {process.LastSignalField}");
                 return false;
             }
             catch (Exception ex)
             {
-                Log($"[MONGO][{process.Name}] Loi: {ex.Message}");
-                return true; // Tam thoi coi nhu OK de tranh restart lien tuc khi loi mang
+                Log($"[MONGO][{process.Name}] Lỗi kết nối/truy vấn: {ex.Message}");
+                return true; // Coi nhu OK de tranh restart khi mat mang
             }
         }
 
@@ -337,9 +407,105 @@ namespace ProgramMonitoringApp
 
         static void Log(string message)
         {
-            Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {message}");
+            string cleanMessage = RemoveAccents(message);
+            Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {cleanMessage}");
             logLine++;
         }
+
+        static string RemoveAccents(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return text;
+            var normalizedString = text.Normalize(NormalizationForm.FormD);
+            var stringBuilder = new StringBuilder();
+
+            foreach (var c in normalizedString)
+            {
+                var unicodeCategory = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+                if (unicodeCategory != System.Globalization.UnicodeCategory.NonSpacingMark)
+                {
+                    stringBuilder.Append(c);
+                }
+            }
+
+            return stringBuilder.ToString().Normalize(NormalizationForm.FormC).Replace("đ", "d").Replace("Đ", "D");
+        }
+
+        static async Task SendNotification(string content)
+        {
+            if (appConfig?.Notify?.Discord?.Enabled == true && !string.IsNullOrEmpty(appConfig.Notify.Discord.Webhook))
+            {
+                try
+                {
+                    var payload = new { content = content };
+                    var json = JsonSerializer.Serialize(payload);
+                    var response = await httpClient.PostAsync(appConfig.Notify.Discord.Webhook, 
+                        new StringContent(json, Encoding.UTF8, "application/json"));
+                    
+                    if (response.IsSuccessStatusCode)
+                        Log("[Discord] Da gui thong bao.");
+                    else
+                        Log($"[Discord] Gui thong bao that bai: {response.StatusCode}");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[Discord] Loi khi gui thong bao: {ex.Message}");
+                }
+            }
+
+            if (appConfig?.Notify?.Telegram?.Enabled == true && !string.IsNullOrEmpty(appConfig.Notify.Telegram.BotToken) && !string.IsNullOrEmpty(appConfig.Notify.Telegram.ChatId))
+            {
+                try
+                {
+                    var url = $"https://api.telegram.org/bot{appConfig.Notify.Telegram.BotToken}/sendMessage";
+                    var payload = new { chat_id = appConfig.Notify.Telegram.ChatId, text = content };
+                    var json = JsonSerializer.Serialize(payload);
+                    var response = await httpClient.PostAsync(url, 
+                        new StringContent(json, Encoding.UTF8, "application/json"));
+
+                    if (response.IsSuccessStatusCode)
+                        Log("[Telegram] Da gui thong bao.");
+                    else
+                        Log($"[Telegram] Gui thong bao that bai: {response.StatusCode}");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[Telegram] Loi khi gui thong bao: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    class AppConfig
+    {
+        public GlobalSettings? Settings { get; set; }
+        public NotifyConfig? Notify { get; set; }
+        public List<TargetProcess>? TargetProcesses { get; set; }
+    }
+
+    class GlobalSettings
+    {
+        public int IdleWaitingMillis { get; set; }
+        public int LoopIntervalSec { get; set; }
+        public string? SiteName { get; set; }
+    }
+
+    class NotifyConfig
+    {
+        public DiscordConfig? Discord { get; set; }
+        public TelegramConfig? Telegram { get; set; }
+    }
+
+    class DiscordConfig
+    {
+        public bool Enabled { get; set; }
+        public string? Webhook { get; set; }
+    }
+
+    class TelegramConfig
+    {
+        public bool Enabled { get; set; }
+        public string? BotToken { get; set; }
+        public string? ChatId { get; set; }
     }
 
     class TargetProcess
